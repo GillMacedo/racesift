@@ -107,10 +107,11 @@ A run with no races prints one line:
 
 ## Usage
 
-    racesift review [--json] [--fail] [FILE ...]
+    racesift review [--json] [--fail] [--top N] [FILE ...]
     racesift compare [--json] [--fail] BASE HEAD
 
 - Reads plain `go test -race` output, `-v` output, `go test -json` output, `go run -race` output from a program, and GitHub Actions logs with their timestamps. With no FILE, or with `-`, it reads stdin.
+- `--top N` prints only the N highest-ranked races, and says how many it left out. `--fail` and `--json` still cover every race.
 - `--json` prints the full result, including every frame of the first report in each group.
 - `--fail` exits 1 when `review` finds races, or when `compare` finds new ones. Without it, both exit 0. Exit code 2 means bad usage or a file it couldn't read.
 - `compare` matches races by the pair of functions involved, ignoring line numbers, so an edit elsewhere in a file doesn't make an old race look new. Two races in the same pair of functions count as one there.

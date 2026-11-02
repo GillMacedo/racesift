@@ -46,6 +46,27 @@ type wantRace struct {
 
 // The shop logs come from real runs of examples/programs. The same four races
 // must come out of the plain, verbose, JSON and GitHub Actions forms.
+func TestReviewTop(t *testing.T) {
+	log := filepath.Join("..", "..", "examples", "logs", "shop-v1.log")
+	var all, out bytes.Buffer
+	if code := run([]string{"review", log}, nil, &all, &all); code != 0 {
+		t.Fatalf("exit %d: %s", code, all.String())
+	}
+	if code := run([]string{"review", "--top", "1", "--fail", log}, nil, &out, &out); code != 1 {
+		t.Fatalf("--fail must still see every race: exit %d", code)
+	}
+	text := out.String()
+	if !strings.Contains(text, "4 distinct races") || !strings.Contains(text, "RACE 1 ") || strings.Contains(text, "RACE 2 ") || !strings.Contains(text, "3 more races not shown") {
+		t.Errorf("got:\n%s", text)
+	}
+	if !strings.Contains(all.String(), "RACE 4 ") || strings.Contains(all.String(), "not shown") {
+		t.Errorf("without --top:\n%s", all.String())
+	}
+	if code := run([]string{"review", "--top", "-1", log}, nil, &out, &out); code != 2 {
+		t.Errorf("negative --top: exit %d", code)
+	}
+}
+
 func TestShopLogsAllForms(t *testing.T) {
 	want := []wantRace{
 		{"cache.go:18 cache.go:25", "TestCacheConcurrentRefresh,TestLoadAll,TestCacheWarmAndServe", "RS101"},

@@ -91,6 +91,7 @@ type Summary struct {
 	HotSpots  []HotSpot `json:"hotSpots,omitempty"`
 	Truncated int       `json:"truncated,omitempty"`
 	JSONInput bool      `json:"jsonInput,omitempty"`
+	Top       int       `json:"-"` // how many races WriteText prints, or 0 for all
 }
 
 // HotSpot is a line of code that appears in more than one distinct race.
@@ -805,6 +806,10 @@ func WriteText(w io.Writer, s *Summary) {
 		}
 	}
 	for i, r := range s.Races {
+		if s.Top > 0 && i >= s.Top {
+			fmt.Fprintf(w, "\n%s not shown. Rerun without --top to see them.\n", plural(len(s.Races)-s.Top, "more race", "more races"))
+			break
+		}
 		fmt.Fprintln(w)
 		writeRace(w, i+1, r, true)
 	}
@@ -904,7 +909,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print JSON")
 	fail := fs.Bool("fail", false, "exit 1 if races are found (review) or new (compare)")
+	top := fs.Int("top", 0, "review: print only the first N races as text")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *top < 0 {
+		fmt.Fprintln(stderr, "--top can't be negative")
 		return 2
 	}
 	files := fs.Args()
@@ -952,6 +962,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	s := Review(reports)
 	s.JSONInput = isJSON
+	s.Top = *top
 	if *asJSON {
 		enc.Encode(s)
 	} else {
