@@ -562,6 +562,9 @@ func inTestFiles(accesses []Access) bool {
 func hints(r *Report, locs []Location) []Hint {
 	var out []Hint
 	acc := r.Accesses
+	if len(acc) == 0 {
+		return []Hint{{"RS000", "This report has no readable access, so the log may be cut off or changed.", "Rerun and keep the whole report."}}
+	}
 	if len(acc) < 2 {
 		return []Hint{{"RS000", "This report has only one access, so the log may be cut off.", "Rerun and keep the whole report."}}
 	}

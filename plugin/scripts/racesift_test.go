@@ -281,7 +281,11 @@ func TestUnreadableReportIsNotACleanRun(t *testing.T) {
 	if len(reports) != 1 || !reports[0].Truncated {
 		t.Fatalf("got %+v", reports)
 	}
-	if summary := Review(reports); len(summary.Races) != 1 || summary.Truncated != 1 {
+	summary := Review(reports)
+	if len(summary.Races) != 1 || summary.Truncated != 1 {
 		t.Fatalf("got %+v", summary)
+	}
+	if hints := summary.Races[0].Hints; len(hints) != 1 || !strings.Contains(hints[0].Text, "no readable access") {
+		t.Errorf("hints: %+v", hints)
 	}
 }

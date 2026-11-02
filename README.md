@@ -128,7 +128,7 @@ A run with no races prints one line:
 | RS107 | Every frame from your code is in `_test.go` files |
 | RS108 | One side has no frame from your code |
 
-RS000 means a report was cut off after one side. Hints come from the stack's shape. Treat them as leads and read the code.
+RS000 means a report was cut off or couldn't be read. Hints come from the stack's shape. Treat them as leads and read the code.
 
 ## Limits
 
