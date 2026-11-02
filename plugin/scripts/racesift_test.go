@@ -121,6 +121,12 @@ func TestProgramOutput(t *testing.T) {
 	if len(s.Races) != 1 {
 		t.Fatalf("got %d races", len(s.Races))
 	}
+	if s.Found != 1 {
+		t.Fatalf("Found = %d, want 1 from warm.log trailer", s.Found)
+	}
+	if s.FoundMismatch || s.Found != s.Reports {
+		t.Fatalf("Found=%d Reports=%d mismatch=%v", s.Found, s.Reports, s.FoundMismatch)
+	}
 	r := s.Races[0]
 	if sides(r) != "cache.go:18 cache.go:25" || hintIDs(r) != "RS101" {
 		t.Errorf("got %s %s", sides(r), hintIDs(r))
@@ -221,7 +227,7 @@ func TestTruncatedReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	cut := string(data)[:strings.Index(string(data), "Goroutine 7")]
-	reports, _, err := Parse(strings.NewReader(cut), "cut")
+	reports, _, _, err := Parse(strings.NewReader(cut), "cut")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +243,7 @@ func TestTruncatedReport(t *testing.T) {
 
 func mustParse(t *testing.T, s string) []*Report {
 	t.Helper()
-	r, _, err := Parse(strings.NewReader(s), "test")
+	r, _, _, err := Parse(strings.NewReader(s), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +301,7 @@ func TestNames(t *testing.T) {
 }
 
 func TestUnreadableReportIsNotACleanRun(t *testing.T) {
-	reports, _, err := Parse(strings.NewReader("WARNING: DATA RACE\ngarbage\n==================\n"), "log")
+	reports, _, _, err := Parse(strings.NewReader("WARNING: DATA RACE\ngarbage\n==================\n"), "log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,5 +314,34 @@ func TestUnreadableReportIsNotACleanRun(t *testing.T) {
 	}
 	if hints := summary.Races[0].Hints; len(hints) != 1 || !strings.Contains(hints[0].Text, "no readable access") {
 		t.Errorf("hints: %+v", hints)
+	}
+}
+
+
+func TestFoundMismatchWhenLogCutOff(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(logs, "warm.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drop the only race body but keep the Found trailer so counts disagree.
+	cut := "sku-1: 0 false\nFound 1 data race(s)\nexit status 66\n"
+	if !bytes.Contains(data, []byte("Found 1 data race(s)")) {
+		t.Fatal("warm.log missing Found trailer")
+	}
+	_ = cut
+	reports, _, found, err := Parse(strings.NewReader(cut), "cut")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != 1 {
+		t.Fatalf("found=%d", found)
+	}
+	s := Review(reports)
+	s.Found = found
+	if found > 0 && found != s.Reports {
+		s.FoundMismatch = true
+	}
+	if s.Reports != 0 || !s.FoundMismatch {
+		t.Fatalf("Reports=%d FoundMismatch=%v", s.Reports, s.FoundMismatch)
 	}
 }

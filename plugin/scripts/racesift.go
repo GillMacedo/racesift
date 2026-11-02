@@ -84,14 +84,16 @@ type Race struct {
 
 // Summary is the result of reviewing one or more logs.
 type Summary struct {
-	Reports   int       `json:"reports"`
-	Races     []*Race   `json:"races"`
-	Tests     []string  `json:"tests,omitempty"`
-	Packages  []string  `json:"packages,omitempty"`
-	HotSpots  []HotSpot `json:"hotSpots,omitempty"`
-	Truncated int       `json:"truncated,omitempty"`
-	JSONInput bool      `json:"jsonInput,omitempty"`
-	Top       int       `json:"-"` // how many races WriteText prints, or 0 for all
+	Reports       int       `json:"reports"`
+	Found         int       `json:"found,omitempty"` // "Found N data race(s)" from program logs
+	FoundMismatch bool      `json:"foundMismatch,omitempty"`
+	Races         []*Race   `json:"races"`
+	Tests         []string  `json:"tests,omitempty"`
+	Packages      []string  `json:"packages,omitempty"`
+	HotSpots      []HotSpot `json:"hotSpots,omitempty"`
+	Truncated     int       `json:"truncated,omitempty"`
+	JSONInput     bool      `json:"jsonInput,omitempty"`
+	Top           int       `json:"-"` // how many races WriteText prints, or 0 for all
 }
 
 // HotSpot is a line of code that appears in more than one distinct race.
@@ -199,22 +201,28 @@ var (
 	resultRe  = regexp.MustCompile(`^(?:FAIL|ok)\s+(\S+)(?:\s|$)`)
 	failRe    = regexp.MustCompile(`^--- FAIL: (\S+)`)
 	runRe     = regexp.MustCompile(`^=== (?:RUN|CONT)\s+(\S+)`)
+	foundRe   = regexp.MustCompile(`^Found (\d+) data race\(s\)$`)
 )
 
 const separator = "=================="
 
 // Parse reads every race report in a log.
-func Parse(r io.Reader, input string) ([]*Report, bool, error) {
+// found is the N from a trailing "Found N data race(s)" line (program logs), or 0 if absent.
+func Parse(r io.Reader, input string) (reports []*Report, isJSON bool, found int, err error) {
 	streams, isJSON, err := readLines(r)
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	var all []*Report
 	for _, s := range streams {
-		all = append(all, parseStream(s, input)...)
+		rs, n := parseStream(s, input)
+		all = append(all, rs...)
+		if n > found {
+			found = n
+		}
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Line < all[j].Line })
-	return all, isJSON, nil
+	return all, isJSON, found, nil
 }
 
 type parser struct {
@@ -264,8 +272,9 @@ func (p *parser) finish(truncated bool) {
 	p.cur = nil
 }
 
-func parseStream(lines []logLine, input string) []*Report {
+func parseStream(lines []logLine, input string) ([]*Report, int) {
 	p := &parser{input: input, access: -1}
+	found := 0
 	// Without -v, "--- FAIL: name" comes just before the race line.
 	// With -v, it comes after, and "=== RUN name" names the test.
 	curTest, justFailed := "", ""
@@ -324,6 +333,12 @@ func parseStream(lines []logLine, input string) []*Report {
 			}
 			continue
 		}
+		if m := foundRe.FindStringSubmatch(trim); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				found = n
+			}
+			continue
+		}
 		if m := runRe.FindStringSubmatch(trim); m != nil {
 			curTest = m[1]
 			continue
@@ -363,7 +378,7 @@ func parseStream(lines []logLine, input string) []*Report {
 			r.Test = r.runTest
 		}
 	}
-	return p.reports
+	return p.reports, found
 }
 
 // funcName turns "pkg.(*T).M(...)" into "pkg.(*T).M".
@@ -846,32 +861,36 @@ func WriteComparison(w io.Writer, c *Comparison) {
 
 // ---------- command line ----------
 
-func loadReports(name string, stdin io.Reader) ([]*Report, bool, error) {
+func loadReports(name string, stdin io.Reader) ([]*Report, bool, int, error) {
 	var r io.Reader
 	if name == "-" {
 		r = stdin
 	} else {
 		f, err := os.Open(name)
 		if err != nil {
-			return nil, false, err
+			return nil, false, 0, err
 		}
 		defer f.Close()
 		r = f
 	}
-	reports, isJSON, err := Parse(r, name)
+	reports, isJSON, found, err := Parse(r, name)
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %w", name, err)
+		return nil, false, 0, fmt.Errorf("%s: %w", name, err)
 	}
-	return reports, isJSON, nil
+	return reports, isJSON, found, nil
 }
 
 func load(name string, stdin io.Reader) (*Summary, error) {
-	reports, isJSON, err := loadReports(name, stdin)
+	reports, isJSON, found, err := loadReports(name, stdin)
 	if err != nil {
 		return nil, err
 	}
 	s := Review(reports)
 	s.JSONInput = isJSON
+	s.Found = found
+	if found > 0 && found != s.Reports {
+		s.FoundMismatch = true
+	}
 	return s, nil
 }
 
@@ -954,17 +973,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var reports []*Report
 	isJSON := false
+	found := 0
 	for _, name := range files {
-		rs, j, err := loadReports(name, stdin)
+		rs, j, n, err := loadReports(name, stdin)
 		if err != nil {
 			fmt.Fprintln(stderr, "racesift:", err)
 			return 2
 		}
 		isJSON = isJSON || j
+		if n > found {
+			found = n
+		}
 		reports = append(reports, rs...)
 	}
 	s := Review(reports)
 	s.JSONInput = isJSON
+	s.Found = found
+	if found > 0 && found != s.Reports {
+		s.FoundMismatch = true
+	}
 	s.Top = *top
 	if *asJSON {
 		enc.Encode(s)
