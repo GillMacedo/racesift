@@ -317,7 +317,6 @@ func TestUnreadableReportIsNotACleanRun(t *testing.T) {
 	}
 }
 
-
 func TestFoundMismatchWhenLogCutOff(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(logs, "warm.log"))
 	if err != nil {
