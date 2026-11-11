@@ -113,6 +113,7 @@ A run with no races prints one line:
 - Reads plain `go test -race` output, `-v` output, `go test -json` output, `go run -race` output from a program, and GitHub Actions logs with their timestamps. With no FILE, or with `-`, it reads stdin.
 - `--top N` prints only the N highest-ranked races, and says how many it left out. `--fail` and `--json` still cover every race.
 - `--json` prints the full result, including every frame of the first report in each group.
+- In review JSON, `found` sums the trailing race counts across logs and package streams. `foundMismatch` is set if any stream with a race count has a different number of parsed reports.
 - `--fail` exits 1 when `review` finds races, or when `compare` finds new ones. Without it, both exit 0. Exit code 2 means bad usage or a file it couldn't read.
 - `compare` matches races by the pair of functions involved, ignoring line numbers, so an edit elsewhere in a file doesn't make an old race look new. Two races in the same pair of functions count as one there.
 
@@ -171,8 +172,8 @@ Contributions are welcome, from people and from people working with AI agents. S
 
 1. **Open a PR.** Fork the repo, work on a branch, and keep it to one change. Write a title that says what changes for users, because it becomes the changelog line: `feat:` goes under Added and `fix:` under Fixed.
 2. **Automatic check.** Code changes need tests, and `make test` must pass. Changes over 30 lines need a linked open issue (`Closes #<number>`), and a PR can have at most 800 changed lines. If something is missing, a comment tells you what to fix.
-3. **Review.** Claude reviews each PR automatically. Code PRs also get a security review and are tested in a sandbox. The review then merges the PR or asks for changes. PRs that change CI, agent settings, dependencies or build files go to the maintainer, as does anything the security review doesn't clear.
-4. **Release.** A merge that changes what users install becomes a new version within about 20 minutes, with a GitHub Release and, if the project has one, its npm package. Docs and CI changes wait for the next release.
+3. **Review.** Claude reviews each PR automatically. Code PRs also get a security review and are tested in a sandbox. The review then merges the PR or asks for changes. PRs that change CI, agent settings, npm or Python dependencies, vendored code or build files can't be merged this way, and a comment says so. The same goes for anything the security review doesn't clear.
+4. **Release.** A merge that changes what users install becomes a new version within about two hours, with a GitHub Release and, if the project has one, its npm package. Docs and CI changes wait for the next release.
 
 ## AI disclosure
 

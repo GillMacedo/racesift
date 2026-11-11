@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -317,30 +318,80 @@ func TestUnreadableReportIsNotACleanRun(t *testing.T) {
 	}
 }
 
-func TestFoundMismatchWhenLogCutOff(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(logs, "warm.log"))
+func TestWindowsRaceOutputPaths(t *testing.T) {
+	s := review(t, "windows-paths.log")
+	if len(s.Races) != 1 {
+		t.Fatalf("got %d races, want 1", len(s.Races))
+	}
+	if len(s.Races[0].Locations) != 2 {
+		t.Fatalf("got %d locations, want 2", len(s.Races[0].Locations))
+	}
+	want := map[int]string{
+		12: "C:/Users/x/app/main.go",
+		20: "C:/Users/x/app/main.go",
+	}
+	for _, loc := range s.Races[0].Locations {
+		if got := want[loc.Line]; got == "" || loc.File != got {
+			t.Errorf("location = %q:%d, want %q", loc.File, loc.Line, got)
+		}
+		if got := shortFile(loc.File); got != "app/main.go" {
+			t.Errorf("shortFile(%q) = %q, want app/main.go", loc.File, got)
+		}
+		if got := locText(loc); !strings.Contains(got, "app/main.go:"+strconv.Itoa(loc.Line)) {
+			t.Errorf("location text = %q", got)
+		}
+	}
+	if !isUser(Frame{Func: "example.com/app.(*Store).Get", File: "C:/Users/x/app/main.go"}) {
+		t.Error("Windows drive path was not recognized as a user source file")
+	}
+	if got := shortFile(`C:\Users\x\app\main.go`); got != "app/main.go" {
+		t.Errorf("shortFile with Windows separators = %q, want app/main.go", got)
+	}
+}
+
+func TestReviewFoundCounts(t *testing.T) {
+	warm := filepath.Join(logs, "warm.log")
+	data, err := os.ReadFile(warm)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Drop the only race body but keep the Found trailer so counts disagree.
-	cut := "sku-1: 0 false\nFound 1 data race(s)\nexit status 66\n"
-	if !bytes.Contains(data, []byte("Found 1 data race(s)")) {
-		t.Fatal("warm.log missing Found trailer")
+	var packages bytes.Buffer
+	events := json.NewEncoder(&packages)
+	for _, pkg := range []string{"example.com/first", "example.com/second"} {
+		event := testEvent{Action: "output", Package: pkg, Output: string(data)}
+		if err := events.Encode(event); err != nil {
+			t.Fatal(err)
+		}
 	}
-	_ = cut
-	reports, _, found, err := Parse(strings.NewReader(cut), "cut")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if found != 1 {
-		t.Fatalf("found=%d", found)
-	}
-	s := Review(reports)
-	s.Found = found
-	if found > 0 && found != s.Reports {
-		s.FoundMismatch = true
-	}
-	if s.Reports != 0 || !s.FoundMismatch {
-		t.Fatalf("Reports=%d FoundMismatch=%v", s.Reports, s.FoundMismatch)
+
+	for _, tc := range []struct {
+		name     string
+		files    []string
+		stdin    string
+		reports  int
+		found    int
+		mismatch bool
+	}{
+		{name: "multiple files", files: []string{warm, warm}, reports: 2, found: 2},
+		{name: "multiple packages", stdin: packages.String(), reports: 2, found: 2},
+		{name: "file without trailer", files: []string{warm, "-"}, stdin: strings.ReplaceAll(string(data), "Found 1 data race(s)\n", ""), reports: 2, found: 1},
+		{name: "cut off", stdin: "Found 3 data race(s)\n", found: 3, mismatch: true},
+		{name: "cut off with another file", files: []string{warm, "-"}, stdin: "Found 3 data race(s)\n", reports: 1, found: 4, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"review", "-json"}, tc.files...)
+			if code := run(args, strings.NewReader(tc.stdin), &stdout, &stderr); code != 0 {
+				t.Fatalf("run exited %d: %s", code, stderr.String())
+			}
+			var got Summary
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Reports != tc.reports || got.Found != tc.found || got.FoundMismatch != tc.mismatch {
+				t.Errorf("reports=%d found=%d mismatch=%v, want %d, %d, %v",
+					got.Reports, got.Found, got.FoundMismatch, tc.reports, tc.found, tc.mismatch)
+			}
+		})
 	}
 }

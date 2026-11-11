@@ -1,0 +1,18 @@
+==================
+WARNING: DATA RACE
+Read at 0x00c0000100 by goroutine 7:
+  example.com/app.(*Store).Get()
+      C:/Users/x/app/main.go:12 +0x28
+
+Previous write at 0x00c0000100 by goroutine 8:
+  example.com/app.(*Store).Set()
+      C:/Users/x/app/main.go:20 +0x34
+
+Goroutine 7 (running) created at:
+  example.com/app.TestStore()
+      C:/Users/x/app/main_test.go:8 +0x45
+
+Goroutine 8 (running) created at:
+  example.com/app.TestStore()
+      C:/Users/x/app/main_test.go:9 +0x51
+==================
