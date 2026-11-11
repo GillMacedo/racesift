@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,6 +122,12 @@ func TestProgramOutput(t *testing.T) {
 	if len(s.Races) != 1 {
 		t.Fatalf("got %d races", len(s.Races))
 	}
+	if s.Found != 1 {
+		t.Fatalf("Found = %d, want 1 from warm.log trailer", s.Found)
+	}
+	if s.FoundMismatch || s.Found != s.Reports {
+		t.Fatalf("Found=%d Reports=%d mismatch=%v", s.Found, s.Reports, s.FoundMismatch)
+	}
 	r := s.Races[0]
 	if sides(r) != "cache.go:18 cache.go:25" || hintIDs(r) != "RS101" {
 		t.Errorf("got %s %s", sides(r), hintIDs(r))
@@ -221,7 +228,7 @@ func TestTruncatedReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	cut := string(data)[:strings.Index(string(data), "Goroutine 7")]
-	reports, _, err := Parse(strings.NewReader(cut), "cut")
+	reports, _, _, err := Parse(strings.NewReader(cut), "cut")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +244,7 @@ func TestTruncatedReport(t *testing.T) {
 
 func mustParse(t *testing.T, s string) []*Report {
 	t.Helper()
-	r, _, err := Parse(strings.NewReader(s), "test")
+	r, _, _, err := Parse(strings.NewReader(s), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +302,7 @@ func TestNames(t *testing.T) {
 }
 
 func TestUnreadableReportIsNotACleanRun(t *testing.T) {
-	reports, _, err := Parse(strings.NewReader("WARNING: DATA RACE\ngarbage\n==================\n"), "log")
+	reports, _, _, err := Parse(strings.NewReader("WARNING: DATA RACE\ngarbage\n==================\n"), "log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,5 +346,52 @@ func TestWindowsRaceOutputPaths(t *testing.T) {
 	}
 	if got := shortFile(`C:\Users\x\app\main.go`); got != "app/main.go" {
 		t.Errorf("shortFile with Windows separators = %q, want app/main.go", got)
+	}
+}
+
+func TestReviewFoundCounts(t *testing.T) {
+	warm := filepath.Join(logs, "warm.log")
+	data, err := os.ReadFile(warm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packages bytes.Buffer
+	events := json.NewEncoder(&packages)
+	for _, pkg := range []string{"example.com/first", "example.com/second"} {
+		event := testEvent{Action: "output", Package: pkg, Output: string(data)}
+		if err := events.Encode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		files    []string
+		stdin    string
+		reports  int
+		found    int
+		mismatch bool
+	}{
+		{name: "multiple files", files: []string{warm, warm}, reports: 2, found: 2},
+		{name: "multiple packages", stdin: packages.String(), reports: 2, found: 2},
+		{name: "file without trailer", files: []string{warm, "-"}, stdin: strings.ReplaceAll(string(data), "Found 1 data race(s)\n", ""), reports: 2, found: 1},
+		{name: "cut off", stdin: "Found 3 data race(s)\n", found: 3, mismatch: true},
+		{name: "cut off with another file", files: []string{warm, "-"}, stdin: "Found 3 data race(s)\n", reports: 1, found: 4, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"review", "-json"}, tc.files...)
+			if code := run(args, strings.NewReader(tc.stdin), &stdout, &stderr); code != 0 {
+				t.Fatalf("run exited %d: %s", code, stderr.String())
+			}
+			var got Summary
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Reports != tc.reports || got.Found != tc.found || got.FoundMismatch != tc.mismatch {
+				t.Errorf("reports=%d found=%d mismatch=%v, want %d, %d, %v",
+					got.Reports, got.Found, got.FoundMismatch, tc.reports, tc.found, tc.mismatch)
+			}
+		})
 	}
 }
