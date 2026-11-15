@@ -312,32 +312,65 @@ func TestUnreadableReportIsNotACleanRun(t *testing.T) {
 }
 
 func TestWindowsRaceOutputPaths(t *testing.T) {
-	s := review(t, "windows-paths.log")
-	if len(s.Races) != 1 {
-		t.Fatalf("got %d races, want 1", len(s.Races))
+	fixture, err := os.ReadFile(filepath.Join(logs, "written/windows-paths.log"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(s.Races[0].Locations) != 2 {
-		t.Fatalf("got %d locations, want 2", len(s.Races[0].Locations))
-	}
-	want := map[int]string{
-		12: "C:/Users/x/app/main.go",
-		20: "C:/Users/x/app/main.go",
-	}
-	for _, loc := range s.Races[0].Locations {
-		if got := want[loc.Line]; got == "" || loc.File != got {
-			t.Errorf("location = %q:%d, want %q", loc.File, loc.Line, got)
+	for _, backslash := range []bool{false, true} {
+		for _, crlf := range []bool{false, true} {
+			name := "slash"
+			text := string(fixture)
+			file := "C:/Users/x/app/main.go"
+			if backslash {
+				name = "backslash"
+				text = strings.ReplaceAll(text, "/", "\\")
+				file = strings.ReplaceAll(file, "/", "\\")
+			}
+			text += "--- FAIL: TestStore (0.00s)\n    testing.go:1617: race detected during execution of test\nFAIL\texample.com/app\t0.01s\n"
+			if crlf {
+				name += "-crlf"
+				text = strings.ReplaceAll(text, "\n", "\r\n")
+			}
+			t.Run(name, func(t *testing.T) {
+				reports, _, err := Parse(strings.NewReader(text), "synthetic-windows")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(reports) != 1 {
+					t.Fatalf("reports: %+v", reports)
+				}
+				for _, access := range reports[0].Accesses {
+					if len(access.Frames) == 0 || !isUser(access.Frames[0]) {
+						t.Fatalf("parsed access not recognized as user code: %+v", access)
+					}
+				}
+				summary := Review(reports)
+				if len(summary.Races) != 1 {
+					t.Fatalf("races: %+v", summary.Races)
+				}
+				race := summary.Races[0]
+				if len(race.Locations) != 2 {
+					t.Fatalf("locations: %+v", race.Locations)
+				}
+				want := []struct {
+					op   string
+					line int
+				}{{"read", 12}, {"write", 20}}
+				for i, loc := range race.Locations {
+					if loc.Op != want[i].op || loc.File != file || loc.Line != want[i].line {
+						t.Errorf("location %d = %+v, want %s %s:%d", i, loc, want[i].op, file, want[i].line)
+					}
+					if got := shortFile(loc.File); got != "app/main.go" {
+						t.Errorf("shortFile = %q", got)
+					}
+					if got := locText(loc); !strings.Contains(got, "app/main.go:"+strconv.Itoa(want[i].line)) {
+						t.Errorf("locText = %q", got)
+					}
+				}
+				if strings.Join(race.Tests, ",") != "TestStore" || strings.Join(race.Packages, ",") != "example.com/app" {
+					t.Errorf("attribution: tests=%v packages=%v", race.Tests, race.Packages)
+				}
+			})
 		}
-		if got := shortFile(loc.File); got != "app/main.go" {
-			t.Errorf("shortFile(%q) = %q, want app/main.go", loc.File, got)
-		}
-		if got := locText(loc); !strings.Contains(got, "app/main.go:"+strconv.Itoa(loc.Line)) {
-			t.Errorf("location text = %q", got)
-		}
-	}
-	if !isUser(Frame{Func: "example.com/app.(*Store).Get", File: "C:/Users/x/app/main.go"}) {
-		t.Error("Windows drive path was not recognized as a user source file")
-	}
-	if got := shortFile(`C:\Users\x\app\main.go`); got != "app/main.go" {
-		t.Errorf("shortFile with Windows separators = %q, want app/main.go", got)
 	}
 }
